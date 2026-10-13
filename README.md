@@ -5,6 +5,11 @@ every tool call and result is scored in one fast request, stale ones are
 dropped or truncated, everything kept stays verbatim. Also usable as an npm
 library.
 
+> **Credit:** this is a fork of
+> [tamaratran/fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction),
+> where the plugin was originally written. This copy adds a configurable
+> Jev endpoint (`baseUrl`) and keeps compacted history across `--resume`.
+
 ## What and why
 
 Most context compaction asks an LLM to summarize old turns. A summary is
