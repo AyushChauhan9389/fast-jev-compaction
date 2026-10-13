@@ -57,6 +57,11 @@
       "title": "Jev model",
       "description": "TypeSafe Jev model name.",
       "default": "jev-latest"
+    },
+    "baseUrl": {
+      "type": "string",
+      "title": "Jev endpoint URL",
+      "description": "TypeSafe System One endpoint. Leave unset for https://api.typesafe.ai/v1/systemone."
     }
   }
 }
