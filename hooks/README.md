@@ -77,6 +77,12 @@ in-flight guard.
 
 ## Scope and caveat
 
+Every kept message goes back to Claude Code without its engine `handle`, so
+it is written fresh after the compact boundary and `--resume` reloads the
+compacted history instead of the original one. The cost: the
+engine's hidden parts of kept messages (reasoning, images) are lost; their
+text and tool calls and results stay.
+
 Function hooks are early access and may change between Claude Code releases.
 This mod uses the generated declarations from 2.1.274 in
 `types/claude-code.d.ts`; regenerate and review that file after a

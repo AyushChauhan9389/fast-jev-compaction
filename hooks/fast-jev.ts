@@ -130,26 +130,26 @@ function toolResultSummary(result: ToolResult): ToolResultSummary {
 }
 
 /**
- * Maps the library's output back onto session messages. Whatever came back
- * unchanged (a message, a tool use, a tool result) is the engine's own object,
- * handle included; anything rebuilt is a fresh message without a handle, so the
- * engine takes the edited content instead of its original.
+ * Maps the library's output back onto session messages. Unchanged tool uses
+ * and tool results are the engine's own objects. Every message goes back
+ * without its `handle`: with one, the engine keeps the original record, whose
+ * parentUuid chain runs back behind the compact boundary, so `--resume`
+ * reloads the pre-compaction history (anthropics/claude-code#95328).
+ * Handle-less messages are written fresh after the boundary, at the cost of
+ * the engine's hidden parts of them (reasoning, images); text and tool pairs
+ * stay.
  */
 export function toSessionMessages(
   input: readonly SessionMessage[],
   output: readonly Message[],
 ): SessionMessage[] {
-  const messages = new Map<Message, SessionMessage>();
   const uses = new Map<ToolUse, ToolUseSummary>();
   const results = new Map<ToolResult, ToolResultSummary>();
   for (const message of input) {
-    messages.set(message, message);
     for (const tool of message.toolUses) uses.set(tool, tool);
     for (const result of message.toolResults ?? []) results.set(result, result);
   }
   return output.map((message) => {
-    const own = messages.get(message);
-    if (own) return own;
     const rebuilt: SessionMessage = {
       role: message.role,
       text: message.text,
