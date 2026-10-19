@@ -41,25 +41,36 @@ built-in compaction summary with the original messages.
    does not fit, compaction throws. Tokens are estimated without a tokenizer (a
    word per six letters, half a token per digit, ~one per other symbol),
    calibrated to land a little above the counts Jev reports.
-4. For every non-pinned call Jev gets two `noul` questions: should the **call**
-   stay (knowing it was made, with its input, still matters), and should the
+4. Only calls worth removing are asked about: non-pinned calls whose result
+   plus input is at least `minSavingsChars` (500 by default). In real Claude
+   Code sessions half of all tool results are under 420 characters and hold
+   about 1% of the bytes; the largest 2–3% hold 80%. The others are kept
+   without a question (`skipped`).
+5. For each of them Jev gets two `noul` questions: should the **call** stay
+   (knowing it was made, with its input, still matters), and should the
    **result** stay verbatim (its contents are still needed and re-running the
    tool would not do).
-5. Questions are split into as many requests as needed so state plus questions
+6. Questions go largest call first into requests where state plus questions
    stays under `maxRequestTokens` (30k by default, under Jev's 32k request
-   limit). The same full state is resent with every request; requests run
-   concurrently and their answers are merged.
-6. Decisions per call, against `keepThreshold`:
+   limit), at most `maxRequests` of them (1 by default); calls that do not fit
+   are kept (`skipped`). The same full state is resent with every request;
+   requests run concurrently and their answers are merged.
+7. A failed request does not sink the others: its calls are kept
+   (`unanswered`). A request Jev rejects as too large (`max_tokens_exceeded`,
+   the token estimate undercounted) is retried once against a state 20%
+   smaller. `compactMessages` also gives each request a timeout and retries
+   rate limits and server errors once.
+8. Decisions per call, against `keepThreshold`:
    - `keepResult ≥ threshold` → keep call and result;
    - else `keepCall ≥ threshold` → keep the call, truncate the result to its
      first `truncateHeadChars` characters plus a one-line note;
    - else → remove the call together with its result.
-7. The message list is rebuilt: a message that loses all its content is
+9. The message list is rebuilt: a message that loses all its content is
    removed, untouched messages are returned as the same objects, and no result
-   is ever left without its call.
+   is ever left without its call. Cuts never split a character in two.
 
-Jev failures, malformed answers, a missing key, or a history that cannot be
-fitted throw; the caller (or the Claude Code hook) decides what to fall back to.
+A missing key, a history that cannot be fitted, or every request failing
+throws; the caller (or the Claude Code hook) decides what to fall back to.
 
 ## Install and usage
 
@@ -95,8 +106,10 @@ can be passed in as is.
 To bring your own transport, implement `JevAsker` (one `ask(state, questions)`
 method) and call `compact(messages, asker, options)`; `buildJevRequest` and
 `parseJevResponse` give you the HTTP request body and response validation.
-The building blocks (`collectToolCalls`, `fitState`, `batchCalls`,
-`decideCall`, `applyDecisions`) are exported too.
+The building blocks (`collectToolCalls`, `fitState`, `selectBatches`,
+`batchCalls`, `decideCall`, `applyDecisions`) are exported too, and
+`resilientAsker` adds a timeout and retries to any `JevAsker` (pass it a
+`Sleep`; `nodeSleep` works under Node).
 
 `apiKey` defaults to `process.env.TYPESAFE_API_KEY`. Never commit the key or
 put it in a source file.
@@ -115,10 +128,17 @@ put it in a source file.
 | `maxStateTokens` | `25000` | Estimated token ceiling for the state |
 | `maxRequestTokens` | `30000` | Estimated ceiling for state plus one batch of questions |
 | `truncateHeadChars` | `300` | Characters of a dropped tool result retained before its note |
+| `minSavingsChars` | `500` | Calls freeing fewer characters (result plus input) are kept without asking |
+| `maxRequests` | `1` | Most Jev requests per compaction; calls are asked about largest first |
+| `timeoutMs` | `15000` | Per-request timeout (`compactMessages`) |
+| `retries` | `1` | Retries after a 429 or 5xx (`compactMessages`) |
+| `retryDelayMs` | `500` | Wait before the first retry, doubling after (`compactMessages`) |
 
 `result.stats` reports message and character counts before and after, the
-per-reason decision counts, the state size in estimated tokens, which fitting
-stage was needed, and the number of requests.
+per-reason decision counts (`kept`, `resultsDropped`, `callsDropped`,
+`pinned`, `skipped`, `unanswered`), the state size in estimated tokens, which
+fitting stage was needed, and the number of requests, failed requests and
+their errors.
 
 ## Limitations
 
@@ -127,8 +147,10 @@ stage was needed, and the number of requests.
 - Token sizes are estimates from character counts, not a tokenizer.
 - Calibration is at the request level; a probability is not a proof that a
   result is safe to delete. The assistant can always re-run the tool.
-- The full state is repeated with every request, so a history near the state
-  ceiling costs one request per handful of questions.
+- The full state is repeated with every request, so raising `maxRequests`
+  multiplies the tokens sent.
+- Every message still costs at least one line of state: a session of several
+  thousand messages cannot be fitted and throws.
 
 ## Claude Code plugin
 
@@ -161,7 +183,10 @@ Restart Claude Code or run `/reload-plugins`. From then on `/compact` (and
 auto-compaction) goes through Jev: the toast reads
 `fast-jev-compaction: kept N/M messages, no summary (…)` when the pruned history
 replaced the built-in summary, or `fallback to built-in summary (…)` when Jev
-could not remove enough (short sessions, or when it fails).
+could not remove enough (short sessions, or when it fails). The fallback only
+happens when Claude Code has to compact (`/compact` or a full context); a
+compaction computed ahead of time, or the plugin's own early one at
+`compactAtPercent`, is skipped instead and the conversation stays as it is.
 
 To run from a checkout without installing: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir .`
 from the repository root. No publishing step is required; the marketplace is

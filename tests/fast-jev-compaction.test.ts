@@ -79,6 +79,8 @@ describe('options', () => {
       maxStateTokens: 25_000,
       maxRequestTokens: 30_000,
       truncateHeadChars: 300,
+      minSavingsChars: 500,
+      maxRequests: 1,
     });
     expect(resolveOptions({
       keepThreshold: Number.NaN,
@@ -235,6 +237,7 @@ describe('question batching', () => {
     callIndex: i * 2 + 1,
     resultIndex: i * 2 + 2,
     resultChars: 100,
+    inputChars: 20,
     isError: false,
     pinned: false,
   }));
@@ -333,7 +336,7 @@ describe('decisions', () => {
 });
 
 describe('compact', () => {
-  it('resends the full state with every batch and merges the answers', async () => {
+  it('resends the full state with every batch and merges the answers when maxRequests allows', async () => {
     const seen: Seen[] = [];
     const messages = transcript();
     const stateTokens = fitState(messages, collectToolCalls(messages, 1), {
@@ -344,7 +347,7 @@ describe('compact', () => {
     const output = await compact(
       messages,
       fakeJev((name) => (name.startsWith('call_') ? 0.9 : 0.1), seen),
-      { preserveRecentMessages: 1, maxRequestTokens: stateTokens + 150 },
+      { preserveRecentMessages: 1, maxRequestTokens: stateTokens + 150, minSavingsChars: 0, maxRequests: 10 },
     );
 
     expect(output.stats.requests).toBe(seen.length);

@@ -42,6 +42,8 @@ export interface ToolCall {
   /** Index of the message holding the tool_result block. */
   resultIndex: number;
   resultChars: number;
+  /** Length of the serialised tool input. */
+  inputChars: number;
   isError: boolean;
   /** In the first or the newest preserved messages; never a candidate. */
   pinned: boolean;
@@ -60,7 +62,12 @@ export interface CallDecision extends CallAnswer {
   id: string;
   tool: string;
   action: CallAction;
-  reason: 'pinned' | 'kept' | 'result_dropped' | 'call_dropped';
+  /**
+   * `skipped`: not asked, because dropping it would save less than
+   * `minSavingsChars` or it fell outside the `maxRequests` budget.
+   * `unanswered`: asked, but its request failed. Both keep the call.
+   */
+  reason: 'pinned' | 'skipped' | 'unanswered' | 'kept' | 'result_dropped' | 'call_dropped';
 }
 
 export interface HistoryToolCall {
@@ -105,6 +112,16 @@ export interface CompactOptions {
   maxRequestTokens?: number;
   /** Characters of a dropped tool result to retain. Default 300. */
   truncateHeadChars?: number;
+  /**
+   * Calls whose removal would free fewer characters (result plus input) are
+   * kept without asking Jev. Default 500.
+   */
+  minSavingsChars?: number;
+  /**
+   * Most Jev requests per compaction. Candidates are asked about largest
+   * first; those that do not fit are kept. Default 1.
+   */
+  maxRequests?: number;
 }
 
 export interface ResolvedCompactOptions {
@@ -114,6 +131,8 @@ export interface ResolvedCompactOptions {
   maxStateTokens: number;
   maxRequestTokens: number;
   truncateHeadChars: number;
+  minSavingsChars: number;
+  maxRequests: number;
 }
 
 export interface CompactResult {
@@ -130,10 +149,16 @@ export interface CompactResult {
     resultsDropped: number;
     callsDropped: number;
     pinned: number;
+    skipped: number;
+    unanswered: number;
     stateTokens: number;
     /** Which fitting stage the state needed, '' when no request was made. */
     stateStage: string;
     requests: number;
+    /** Requests that failed; their calls are kept (`unanswered`). */
+    failedRequests: number;
+    /** Why they failed, one message per failed request. */
+    errors: string[];
     ms: number;
   };
 }

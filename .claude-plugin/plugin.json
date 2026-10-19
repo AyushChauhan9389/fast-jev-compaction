@@ -52,6 +52,24 @@
       "description": "Characters of a tool result kept when Jev decides its full output is no longer needed; 0 keeps only the note.",
       "default": 300
     },
+    "minSavingsChars": {
+      "type": "number",
+      "title": "Minimum characters to ask about",
+      "description": "Tool calls whose removal would free fewer characters (result plus input) are kept without asking Jev.",
+      "default": 500
+    },
+    "maxRequests": {
+      "type": "number",
+      "title": "Maximum Jev requests",
+      "description": "Most Jev requests per compaction; calls are asked about largest first and the rest are kept.",
+      "default": 1
+    },
+    "requestTimeoutMs": {
+      "type": "number",
+      "title": "Jev request timeout (ms)",
+      "description": "Longest wait for one Jev request before it counts as failed.",
+      "default": 15000
+    },
     "model": {
       "type": "string",
       "title": "Jev model",

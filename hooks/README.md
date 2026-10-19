@@ -55,6 +55,9 @@ The plugin declares these `userConfig` values in
 | `maxStateTokens` | `25000` |
 | `maxRequestTokens` | `30000` |
 | `truncateHeadChars` | `300` |
+| `minSavingsChars` | `500` |
+| `maxRequests` | `1` |
+| `requestTimeoutMs` | `15000` |
 | `model` | `jev-latest` |
 | `baseUrl` | `https://api.typesafe.ai/v1/systemone` |
 
@@ -62,18 +65,34 @@ The TypeSafe key can be supplied as the sensitive `apiKey` plugin option or
 through `TYPESAFE_API_KEY`. The environment variable is the recommended
 development setup.
 
-Every option except `apiKey`, `compactAtPercent`, `minReductionRatio` and
-`model` is passed straight to the library; see the root README for what they
-do. The `session.compact` hook runs the Jev requests concurrently. If Jev fails,
-the response is malformed, the key is unavailable, the history cannot be
-fitted into the state budget, or the estimated reduction is below
-`minReductionRatio`, the hook logs a fallback and delegates to Claude Code's
-built-in compaction. The outcome is shown as a toast and logged with the
-reduction, per-reason counts, state size and request count; a per-call
-`decisions:` line with both probabilities is logged for diagnosis. The
-`turn.complete` hook requests
-compaction when `context.percent` reaches `compactAtPercent`, with an
-in-flight guard.
+Every option except `apiKey`, `compactAtPercent`, `minReductionRatio`,
+`requestTimeoutMs` and `model` is passed straight to the library; see the root
+README for what they do. The `session.compact` hook runs the Jev requests
+concurrently, each bounded by `requestTimeoutMs` (on the host clock) and
+retried once on a rate limit or server error. A failed request only keeps its
+own calls; the others' answers still count.
+
+If every request fails, the key is unavailable, the history cannot be fitted
+into the state budget, or the estimated reduction is below
+`minReductionRatio`, what happens depends on the trigger:
+
+| Trigger | Then |
+| --- | --- |
+| `auto` (context full), `manual` (`/compact`) | Falls back to Claude Code's built-in summary |
+| `precompute` (ahead of time), `plugin` (this plugin's `compactAtPercent`) | Skipped: the conversation stays as it is |
+
+A subagent's or fork's own compaction (`agentId` set) is left to the built-in
+path untouched. A successful precompute is logged, not toasted, since Claude
+Code installs it only if the conversation has not moved on. Other outcomes
+are shown as a toast and logged with the reduction, per-reason counts, state
+size and request count; a per-call `decisions:` line with both probabilities
+is logged for diagnosis.
+
+The `turn.complete` hook requests compaction when `context.percent` reaches
+`compactAtPercent`, after a model answer in the main conversation only, with
+an in-flight guard. When that compaction is skipped, the next try waits until
+the context has grown another 10 points, so a conversation with little left
+to remove is not re-scored after every turn.
 
 ## Scope and caveat
 

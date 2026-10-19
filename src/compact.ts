@@ -1,5 +1,5 @@
-import { noulAnswer } from './request.js';
-import { collectToolCalls, estimateTokens, fitState } from './state.js';
+import { JevHttpError, noulAnswer } from './request.js';
+import { collectToolCalls, estimateTokens, fitState, safeCut } from './state.js';
 import type {
   CallAnswer,
   CallDecision,
@@ -21,7 +21,12 @@ export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   maxStateTokens: 25_000,
   maxRequestTokens: 30_000,
   truncateHeadChars: 300,
+  minSavingsChars: 500,
+  maxRequests: 1,
 };
+
+/** How far the state budget shrinks when Jev says a request was too large. */
+const TOO_LARGE_SHRINK = 0.8;
 
 /** Tokens the request envelope (`model`, key names) adds around state and questions. */
 const REQUEST_OVERHEAD_TOKENS = 20;
@@ -49,7 +54,37 @@ export function resolveOptions(options: CompactOptions = {}): ResolvedCompactOpt
       0,
       Math.floor(finite(options.truncateHeadChars, DEFAULT_OPTIONS.truncateHeadChars)),
     ),
+    minSavingsChars: Math.max(0, finite(options.minSavingsChars, DEFAULT_OPTIONS.minSavingsChars)),
+    maxRequests: Math.max(
+      1,
+      Math.floor(finite(options.maxRequests, DEFAULT_OPTIONS.maxRequests)),
+    ),
   };
+}
+
+/** Characters dropping the call would free: its result and its input. */
+export function callSavings(call: Pick<ToolCall, 'resultChars' | 'inputChars'>): number {
+  return call.resultChars + call.inputChars;
+}
+
+/**
+ * The calls worth asking Jev about, in request-sized batches. Pinned calls and
+ * calls that would free less than `minSavingsChars` are left out; the rest go
+ * largest first, so when `maxRequests` cuts the list it cuts the smallest.
+ * Each batch lists its calls in transcript order.
+ */
+export function selectBatches(
+  calls: readonly ToolCall[],
+  stateTokens: number,
+  options: Pick<ResolvedCompactOptions, 'maxRequestTokens' | 'minSavingsChars' | 'maxRequests'>,
+): ToolCall[][] {
+  const order = new Map(calls.map((call, index) => [call, index]));
+  const ranked = calls
+    .filter((call) => !call.pinned && callSavings(call) >= options.minSavingsChars)
+    .sort((a, b) => callSavings(b) - callSavings(a));
+  return batchCalls(ranked, stateTokens, options)
+    .slice(0, options.maxRequests)
+    .map((batch) => batch.sort((a, b) => order.get(a)! - order.get(b)!));
 }
 
 /** The two `noul` questions asked about one call: keep the call, keep its result. */
@@ -134,8 +169,9 @@ async function askBatch(
 
 function truncatedResultText(text: string, isError: boolean, headChars: number): string {
   if (text.length <= headChars + 120) return text;
-  const head = headChars > 0 ? `${text.slice(0, headChars)}\n` : '';
-  return `${head}[fast-jev-compaction truncated ${text.length - headChars} chars of this tool result${
+  const cut = safeCut(text, headChars);
+  const head = cut > 0 ? `${text.slice(0, cut)}\n` : '';
+  return `${head}[fast-jev-compaction truncated ${text.length - cut} chars of this tool result${
     isError ? ' (error)' : ''
   }; re-run the tool if needed]`;
 }
@@ -247,12 +283,51 @@ function count(decisions: readonly CallDecision[], reason: CallDecision['reason'
   return decisions.filter((decision) => decision.reason === reason).length;
 }
 
+const KEEP: CallAnswer = { keepCall: 1, keepResult: 1 };
+
+type FailedBatch = { batch: ToolCall[]; error: unknown };
+
+/** Asks every batch concurrently; answers land in `answers`, failures come back. */
+async function askAll(
+  asker: JevAsker,
+  state: CompactionState,
+  batches: readonly ToolCall[][],
+  answers: Map<string, CallAnswer>,
+): Promise<FailedBatch[]> {
+  const settled = await Promise.allSettled(batches.map((batch) => askBatch(asker, state, batch)));
+  const failed: FailedBatch[] = [];
+  settled.forEach((outcome, index) => {
+    if (outcome.status === 'fulfilled') {
+      for (const [id, answer] of outcome.value) answers.set(id, answer);
+    } else failed.push({ batch: batches[index]!, error: outcome.reason });
+  });
+  return failed;
+}
+
+function tryFitState(...args: Parameters<typeof fitState>): ReturnType<typeof fitState> | undefined {
+  try {
+    return fitState(...args);
+  } catch {
+    return undefined;
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
- * Compacts a transcript by asking Jev, for every tool call outside the pinned
- * first and newest messages, whether the call and whether its result must
- * stay. The whole history (results omitted, fitted into `maxStateTokens`) is
- * sent as state with every batch of questions. Throws when Jev fails or the
- * history cannot be fitted; the caller decides whether to fall back.
+ * Compacts a transcript by asking Jev about the tool calls worth removing:
+ * outside the pinned first and newest messages, freeing at least
+ * `minSavingsChars`, largest first, in at most `maxRequests` requests. For
+ * each, Jev says whether the call and whether its result must stay. The whole
+ * history (results omitted, fitted into `maxStateTokens`) is sent as state
+ * with every request.
+ *
+ * Calls not asked about, or whose request failed, are kept. A request Jev
+ * rejects as too large is retried once against a smaller state. Throws when
+ * every request fails or the history cannot be fitted; the caller decides
+ * whether to fall back.
  */
 export async function compact(
   messages: readonly Message[],
@@ -262,25 +337,60 @@ export async function compact(
   const started = Date.now();
   const resolved = resolveOptions(options);
   const calls = collectToolCalls(messages, resolved.preserveRecentMessages);
-  const candidates = calls.filter((call) => !call.pinned);
   const charsBefore = messages.reduce((sum, message) => sum + messageChars(message), 0);
 
   let fitted: { tokens: number; stage: string } = { tokens: 0, stage: '' };
   let batches: ToolCall[][] = [];
+  let requests = 0;
+  let failed: FailedBatch[] = [];
   const answers = new Map<string, CallAnswer>();
-  if (candidates.length > 0) {
+  const worthAsking = calls.some(
+    (call) => !call.pinned && callSavings(call) >= resolved.minSavingsChars,
+  );
+  if (worthAsking) {
     const state = fitState(messages, calls, resolved);
     fitted = state;
-    batches = batchCalls(candidates, state.tokens, resolved);
-    const answered = await Promise.all(
-      batches.map((batch) => askBatch(asker, state.state, batch)),
+    batches = selectBatches(calls, state.tokens, resolved);
+    requests = batches.length;
+    failed = await askAll(asker, state.state, batches, answers);
+
+    const tooLarge = failed.filter(
+      ({ error }) => error instanceof JevHttpError && error.tooLarge,
     );
-    for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
+    // If the state cannot shrink that far, those requests stay failed.
+    const smaller =
+      tooLarge.length > 0
+        ? tryFitState(messages, calls, {
+            ...resolved,
+            maxStateTokens: Math.floor(state.tokens * TOO_LARGE_SHRINK),
+          })
+        : undefined;
+    if (smaller) {
+      fitted = smaller;
+      requests += tooLarge.length;
+      const retried = await askAll(
+        asker,
+        smaller.state,
+        tooLarge.map(({ batch }) => batch),
+        answers,
+      );
+      failed = [...failed.filter((entry) => !tooLarge.includes(entry)), ...retried];
+    }
+    if (failed.length === batches.length) throw failed[0]!.error;
   }
 
-  const decisions = calls.map((call) =>
-    decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
-  );
+  const asked = new Set(batches.flat().map((call) => call.id));
+  const decisions = calls.map((call): CallDecision => {
+    const answer = answers.get(call.id);
+    if (call.pinned || answer) return decideCall(call, answer ?? KEEP, resolved);
+    return {
+      id: call.id,
+      tool: call.tool,
+      ...KEEP,
+      action: 'keep',
+      reason: asked.has(call.id) ? 'unanswered' : 'skipped',
+    };
+  });
   const kept = applyDecisions(
     messages,
     decisions,
@@ -300,9 +410,13 @@ export async function compact(
       resultsDropped: count(decisions, 'result_dropped'),
       callsDropped: count(decisions, 'call_dropped'),
       pinned: count(decisions, 'pinned'),
+      skipped: count(decisions, 'skipped'),
+      unanswered: count(decisions, 'unanswered'),
       stateTokens: fitted.tokens,
       stateStage: fitted.stage,
-      requests: batches.length,
+      requests,
+      failedRequests: failed.length,
+      errors: failed.map(({ error }) => errorText(error)),
       ms: Date.now() - started,
     },
   };

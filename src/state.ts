@@ -37,14 +37,30 @@ export function estimateTokens(text: string): number {
   return Math.ceil(tokens);
 }
 
+const isHighSurrogate = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
+
+/**
+ * `index` moved back one unit when cutting there would split a surrogate pair
+ * (an emoji, say): a lone half makes the API reject the request as invalid
+ * Unicode.
+ */
+export function safeCut(text: string, index: number): number {
+  return index > 0 && index < text.length && isHighSurrogate(text.charCodeAt(index - 1))
+    ? index - 1
+    : index;
+}
+
 export function truncate(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`;
+  return text.length <= limit
+    ? text
+    : `${text.slice(0, safeCut(text, Math.max(0, limit - 1)))}…`;
 }
 
 function abridge(text: string, head: number, tail: number): string {
   if (text.length <= head + tail + 40) return text;
-  const omitted = text.length - head - tail;
-  return `${text.slice(0, head)}\n[… ${omitted} chars omitted …]\n${text.slice(-tail)}`;
+  const headEnd = safeCut(text, head);
+  const tailStart = safeCut(text, text.length - tail);
+  return `${text.slice(0, headEnd)}\n[… ${tailStart - headEnd} chars omitted …]\n${text.slice(tailStart)}`;
 }
 
 export function isPinned(
@@ -82,6 +98,7 @@ export function collectToolCalls(
         callIndex,
         resultIndex: found.index,
         resultChars: found.result.text.length,
+        inputChars: inputJson(tool.input).length,
         isError: found.result.isError ?? false,
         pinned:
           isPinned(callIndex, messages.length, preserveRecentMessages) ||
@@ -92,14 +109,16 @@ export function collectToolCalls(
   return calls;
 }
 
-function inputText(input: Record<string, unknown>, limit: number): string {
-  let json = '';
+function inputJson(input: Record<string, unknown>): string {
   try {
-    json = JSON.stringify(input);
+    return JSON.stringify(input) ?? '';
   } catch {
-    json = '[unserializable input]';
+    return '[unserializable input]';
   }
-  return truncate(json, limit);
+}
+
+function inputText(input: Record<string, unknown>, limit: number): string {
+  return truncate(inputJson(input), limit);
 }
 
 function resultNote(call: ToolCall): string {
