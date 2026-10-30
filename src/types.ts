@@ -97,6 +97,8 @@ export interface FittedState {
   tokens: number;
   /** Which fitting stage produced the state, for diagnostics. */
   stage: string;
+  /** Calls left out of the history to fit; Jev cannot see them, so never ask. */
+  omittedCalls?: ReadonlySet<string>;
 }
 
 export interface CompactOptions {

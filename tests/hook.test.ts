@@ -143,7 +143,7 @@ describe('compactSession', () => {
     ]);
     expect(messages.map((m) => m.text)).toEqual(['Fix the failing test.', '', '', 'Fixing now.', 'go ahead']);
     expect(messages.every((m) => m.handle === undefined)).toBe(true);
-    expect(summarize(output)).toMatch(/^\d+% reduction; 1 call_dropped, 1 too small to ask; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
+    expect(summarize(output)).toMatch(/^\d+% reduction; 1 call_dropped, 1 not asked; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
     expect(decisionLog(output)).toBe('t1:Read:drop_call/call=0.10/result=0.10');
     expect(decisionLogLines(output)).toEqual([`decisions: ${decisionLog(output)}`]);
   });

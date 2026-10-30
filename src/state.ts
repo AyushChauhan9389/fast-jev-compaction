@@ -2,6 +2,7 @@ import type {
   CompactionState,
   FittedState,
   HistoryEntry,
+  HistoryToolCall,
   Message,
   ResolvedCompactOptions,
   ToolCall,
@@ -15,6 +16,8 @@ export const STATE_CONTEXT =
 const INPUT_CHARS = [1000, 200, 60] as const;
 const TEXT_HEAD = 400;
 const TEXT_TAIL = 150;
+/** Room kept for the note that replaces left-out calls. */
+const OMITTED_NOTE_TOKENS = 30;
 
 const TOKEN_PIECES = /[A-Za-z]+|\d+|[^\sA-Za-z\d]/g;
 
@@ -316,6 +319,40 @@ export function fitState(
   perEntry = history.map(entryTokens);
   tokens = baseTokens + perEntry.reduce((sum, n) => sum + n, 0);
   if (fits()) return fitted(history, tokens, 'old calls merged');
+
+  // Last resort: leave out the oldest call lines. Jev cannot judge a call it
+  // cannot see, so the caller keeps `omittedCalls` without asking.
+  const omittedCalls = new Set<string>();
+  let firstOmitted = 0;
+  const withoutOmitted = (): FittedState => {
+    const rest = history.filter((e) => pinned(e) || (e.tool_calls?.length ?? 0) > 0);
+    const at = rest.findIndex((e) => e.i >= firstOmitted);
+    rest.splice(at < 0 ? rest.length : at, 0, {
+      i: firstOmitted,
+      role: 'user',
+      text: `[… ${omittedCalls.size} older tool calls left out to fit …]`,
+    });
+    const state = stateOf(rest);
+    return { state, tokens: estimateTokens(JSON.stringify(state)), stage: 'oldest calls left out', omittedCalls };
+  };
+  let over = tokens - options.maxStateTokens;
+  while (over > 0) {
+    let freed = 0;
+    for (const entry of history) {
+      const lines = entry.tool_calls as (HistoryToolCall | string)[] | undefined;
+      if (pinned(entry) || !lines) continue;
+      while (lines.length > 0 && freed < over + OMITTED_NOTE_TOKENS) {
+        const line = lines.shift()!;
+        if (omittedCalls.size === 0) firstOmitted = entry.i;
+        omittedCalls.add(typeof line === 'string' ? line.slice(0, line.indexOf(' ')) : line.id);
+        freed += estimateTokens(JSON.stringify(line)) + 1;
+      }
+    }
+    if (freed === 0) break;
+    const result = withoutOmitted();
+    if (result.tokens <= options.maxStateTokens) return result;
+    over = result.tokens - options.maxStateTokens;
+  }
 
   throw new Error(
     `history too large for Jev (~${tokens} tokens after truncation, limit ${options.maxStateTokens})`,

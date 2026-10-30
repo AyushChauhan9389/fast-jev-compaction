@@ -217,7 +217,7 @@ export function summarize(result: CompactResult): string {
     stats.resultsDropped > 0 ? `${stats.resultsDropped} results truncated` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
-    stats.skipped > 0 ? `${stats.skipped} too small to ask` : '',
+    stats.skipped > 0 ? `${stats.skipped} not asked` : '',
     stats.unanswered > 0 ? `${stats.unanswered} unanswered` : '',
   ].filter(Boolean);
   return `${percent(reductionRatio(result))} reduction; ${

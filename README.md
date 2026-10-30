@@ -37,8 +37,10 @@ built-in compaction summary with the original messages.
    oldest non-pinned messages first; old non-pinned messages collapsed to a
    `[… N chars omitted …]` note; old tool calls reduced to one line each
    (`t12 Read file_path=src/a.ts → ok 480ch`); old call-less messages left
-   out; runs of old call-only messages folded into one entry. If it still
-   does not fit, compaction throws. Tokens are estimated without a tokenizer (a
+   out; runs of old call-only messages folded into one entry; finally the
+   oldest call lines left out behind a `[… N older tool calls left out …]`
+   note. Jev cannot judge calls it cannot see, so those are kept without a
+   question. Tokens are estimated without a tokenizer (a
    word per six letters, half a token per digit, ~one per other symbol),
    calibrated to land a little above the counts Jev reports.
 4. Only calls worth removing are asked about: non-pinned calls whose result
@@ -149,8 +151,8 @@ their errors.
   result is safe to delete. The assistant can always re-run the tool.
 - The full state is repeated with every request, so raising `maxRequests`
   multiplies the tokens sent.
-- Every message still costs at least one line of state: a session of several
-  thousand messages cannot be fitted and throws.
+- In a very long session the oldest calls are left out of the state and so
+  are never pruned; only the newer part of the history shrinks.
 
 ## Claude Code plugin
 

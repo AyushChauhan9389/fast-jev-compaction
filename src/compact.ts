@@ -356,7 +356,9 @@ export async function compact(
   if (worthAsking) {
     const state = fitState(messages, calls, resolved);
     fitted = state;
-    batches = selectBatches(calls, state.tokens, resolved);
+    // Calls left out of the state to fit cannot be judged: keep them.
+    const visible = calls.filter((call) => !state.omittedCalls?.has(call.id));
+    batches = selectBatches(visible, state.tokens, resolved);
     requests = batches.length;
     failed = await askAll(asker, state.state, batches, answers);
 
@@ -377,7 +379,9 @@ export async function compact(
       const retried = await askAll(
         asker,
         smaller.state,
-        tooLarge.map(({ batch }) => batch),
+        tooLarge
+          .map(({ batch }) => batch.filter((call) => !smaller.omittedCalls?.has(call.id)))
+          .filter((batch) => batch.length > 0),
         answers,
       );
       failed = [...failed.filter((entry) => !tooLarge.includes(entry)), ...retried];

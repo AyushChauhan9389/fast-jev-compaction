@@ -196,6 +196,36 @@ describe('state fitting', () => {
     expect(merged.state.history[1]?.tool_calls?.[39]).toMatch(/^t40 Read /);
     expect(merged.state.history[0]?.text).toBe('start');
     expect(merged.state.history[2]?.text).toBe('done');
+
+    const budget = Math.floor(merged.tokens * 0.6);
+    const left = fitState(messages, calls, { ...fit, preserveRecentMessages: 1, maxStateTokens: budget });
+    expect(left.stage).toBe('oldest calls left out');
+    expect(left.tokens).toBeLessThanOrEqual(budget);
+    expect(left.omittedCalls?.has('t1')).toBe(true);
+    expect(left.omittedCalls?.has('t40')).toBe(false);
+    expect(left.state.history[1]?.text).toBe(`[… ${left.omittedCalls?.size} older tool calls left out to fit …]`);
+    expect(left.state.history.at(-1)?.text).toBe('done');
+  });
+
+  it('keeps the calls it had to leave out of the state, without asking', async () => {
+    const messages = [message('user', 'start')];
+    for (let i = 0; i < 40; i += 1) {
+      const big = `line ${i}\n`.repeat(100);
+      messages.push(call(`c${i}`, 'Read', { file_path: `/repo/src/module-${i}.ts` }, big), result(`c${i}`, big));
+    }
+    messages.push(message('assistant', 'done'));
+    const calls = collectToolCalls(messages, 1);
+    const budget = Math.floor(fitState(messages, calls, { ...fit, preserveRecentMessages: 1 }).tokens * 0.2);
+    const seen: Seen[] = [];
+    const output = await compact(messages, fakeJev(() => 0, seen), {
+      preserveRecentMessages: 1,
+      maxStateTokens: budget,
+    });
+    const asked = seen.flatMap((s) => s.questions);
+    expect(asked).not.toContain('call_t1');
+    expect(asked).toContain('call_t40');
+    expect(output.decisions.find((d) => d.id === 't1')).toMatchObject({ action: 'keep', reason: 'skipped' });
+    expect(output.decisions.find((d) => d.id === 't40')?.action).toBe('drop_call');
   });
 
   it('abridges long texts oldest-first and collapses old messages last', () => {
