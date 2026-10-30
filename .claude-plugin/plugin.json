@@ -61,8 +61,8 @@
     "maxRequests": {
       "type": "number",
       "title": "Maximum Jev requests",
-      "description": "Most Jev requests per compaction; calls are asked about largest first and the rest are kept.",
-      "default": 1
+      "description": "Most Jev requests per compaction, sent in parallel; calls are asked about largest first and the rest are kept.",
+      "default": 4
     },
     "requestTimeoutMs": {
       "type": "number",

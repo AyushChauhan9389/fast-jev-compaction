@@ -54,7 +54,7 @@ built-in compaction summary with the original messages.
    tool would not do).
 6. Questions go largest call first into requests where state plus questions
    stays under `maxRequestTokens` (30k by default, under Jev's 32k request
-   limit), at most `maxRequests` of them (1 by default); calls that do not fit
+   limit), at most `maxRequests` of them (4 by default, sent in parallel); calls that do not fit
    are kept (`skipped`). The same full state is resent with every request;
    requests run concurrently and their answers are merged.
 7. A failed request does not sink the others: its calls are kept
@@ -131,7 +131,7 @@ put it in a source file.
 | `maxRequestTokens` | `30000` | Estimated ceiling for state plus one batch of questions |
 | `truncateHeadChars` | `300` | Characters of a dropped tool result retained before its note |
 | `minSavingsChars` | `500` | Calls freeing fewer characters (result plus input) are kept without asking |
-| `maxRequests` | `1` | Most Jev requests per compaction; calls are asked about largest first |
+| `maxRequests` | `4` | Most Jev requests per compaction; calls are asked about largest first |
 | `timeoutMs` | `15000` | Per-request timeout (`compactMessages`) |
 | `retries` | `1` | Retries after a 429 or 5xx (`compactMessages`) |
 | `retryDelayMs` | `500` | Wait before the first retry, doubling after (`compactMessages`) |

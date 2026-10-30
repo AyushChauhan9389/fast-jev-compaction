@@ -56,7 +56,7 @@ The plugin declares these `userConfig` values in
 | `maxRequestTokens` | `30000` |
 | `truncateHeadChars` | `300` |
 | `minSavingsChars` | `500` |
-| `maxRequests` | `1` |
+| `maxRequests` | `4` |
 | `requestTimeoutMs` | `15000` |
 | `model` | `jev-latest` |
 | `baseUrl` | `https://api.typesafe.ai/v1/systemone` |

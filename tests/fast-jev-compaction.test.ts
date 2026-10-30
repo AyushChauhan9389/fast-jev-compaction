@@ -80,7 +80,7 @@ describe('options', () => {
       maxRequestTokens: 30_000,
       truncateHeadChars: 300,
       minSavingsChars: 500,
-      maxRequests: 1,
+      maxRequests: 4,
     });
     expect(resolveOptions({
       keepThreshold: Number.NaN,

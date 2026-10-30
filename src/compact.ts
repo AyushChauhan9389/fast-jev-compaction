@@ -22,7 +22,7 @@ export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   maxRequestTokens: 30_000,
   truncateHeadChars: 300,
   minSavingsChars: 500,
-  maxRequests: 1,
+  maxRequests: 4,
 };
 
 /** How far the state budget shrinks when Jev says a request was too large. */
