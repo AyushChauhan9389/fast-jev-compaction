@@ -243,6 +243,11 @@ describe('question batching', () => {
   }));
   const options = { maxRequestTokens: 30_000 };
 
+  it('caps a request at 128 questions (64 calls)', () => {
+    const many = Array.from({ length: 130 }, (_, i) => ({ ...calls[0]!, id: `t${i}` }));
+    expect(batchCalls(many, 0, { maxRequestTokens: 1_000_000 }).map((b) => b.length)).toEqual([64, 64, 2]);
+  });
+
   it('puts everything in one request when it fits', () => {
     expect(batchCalls(calls, 1000, options)).toHaveLength(1);
   });
